@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NEURAL SNAKE — 3D</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#060a13">
+<meta name="description" content="A 3D neon snake game: power-ups, combos, five modes and a living arena.">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* =========================================================================
+   NEURAL SNAKE — design tokens
+   Palette is a "data substrate": deep indigo ground, aqua signal, violet
+   depth, magenta for danger. --accent is re-bound at runtime to whichever
+   snake colour the player picked, so the whole UI follows their choice.
+   ========================================================================= */
+:root{
+  --bg:#060a13;
+  --bg-2:#0b1222;
+  --glass:rgba(11,19,35,.68);
+  --glass-2:rgba(8,14,27,.86);
+  --line:rgba(126,196,255,.16);
+  --line-2:rgba(126,196,255,.30);
+  --text:#e6f1ff;
+  --muted:#8ea6c8;
+  --dim:#5b708d;
+  --aqua:#38f0d0;
+  --violet:#7c5cff;
+  --magenta:#ff2e88;
+  --amber:#ffb340;
+  --lime:#9bff6a;
+  --accent:#38f0d0;
+  --accent-soft:rgba(56,240,208,.14);
+  --danger:#ff4d6d;
+  --ok:#54e08a;
+  --cut:14px;                     /* corner chamfer on panels */
+  --pad:clamp(16px,3.2vmin,30px);
+  --r-sm:6px;
+  --font-d:"Chakra Petch","Segoe UI Semibold",system-ui,-apple-system,sans-serif;
+  --font-m:"JetBrains Mono",ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  --safe-t:env(safe-area-inset-top,0px);
+  --safe-b:env(safe-area-inset-bottom,0px);
+  --safe-l:env(safe-area-inset-left,0px);
+  --safe-r:env(safe-area-inset-right,0px);
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--bg)}
+body{
+  font-family:var(--font-d);
+  color:var(--text);
+  font-size:16px;
+  line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+  -webkit-tap-highlight-color:transparent;
+  -webkit-touch-callout:none;
+  overscroll-behavior:none;
+  touch-action:none;
+  user-select:none;
+  -webkit-user-select:none;
+}
+#app{position:fixed;inset:0;overflow:hidden;touch-action:none}
+canvas#stage{position:absolute;inset:0;display:block;width:100%;height:100%}
+
+/* ---- ambient screen treatment: vignette + faint scanlines + grain ------- */
+#fx{position:absolute;inset:0;pointer-events:none;z-index:2}
+#fx .vig{
+  position:absolute;inset:0;
+  background:radial-gradient(115% 90% at 50% 45%,transparent 38%,rgba(2,4,10,.55) 82%,rgba(1,2,6,.92) 100%);
+}
+#fx .scan{
+  position:absolute;inset:0;opacity:.34;mix-blend-mode:soft-light;
+  background:repeating-linear-gradient(to bottom,rgba(160,220,255,.10) 0 1px,transparent 1px 3px);
+}
+#fx .flash{position:absolute;inset:0;background:#fff;opacity:0;transition:opacity .34s ease-out}
+#fx .flash.on{opacity:.30;transition:opacity .04s linear}
+#fx .edge{
+  position:absolute;inset:0;opacity:0;transition:opacity .25s ease;
+  box-shadow:inset 0 0 90px 10px var(--hurt,rgba(255,45,110,.85));
+}
+#fx .edge.on{opacity:1;transition:opacity .05s linear}
+.no-fx #fx .scan{display:none}
+
+/* ---- screens ------------------------------------------------------------ */
+.screen{
+  position:absolute;inset:0;z-index:5;
+  display:flex;align-items:center;justify-content:center;
+  padding:calc(var(--pad) + var(--safe-t)) calc(var(--pad) + var(--safe-r)) calc(var(--pad) + var(--safe-b)) calc(var(--pad) + var(--safe-l));
+  opacity:0;visibility:hidden;pointer-events:none;
+  transition:opacity .30s ease,visibility .30s ease;
+}
+.screen.active{opacity:1;visibility:visible;pointer-events:auto}
+.screen>.sheet{transform:translateY(14px) scale(.985);transition:transform .34s cubic-bezier(.2,.9,.25,1)}
+.screen.active>.sheet{transform:none}
+.reduce-motion .screen,.reduce-motion .screen>.sheet{transition-duration:.01s}
+
+/* ---- panel / sheet ----------------------------------------------------- */
+.sheet{
+  position:relative;
+  width:min(880px,100%);
+  max-height:100%;
+  display:flex;flex-direction:column;
+  background:linear-gradient(160deg,var(--glass),var(--glass-2));
+  border:1px solid var(--line);
+  clip-path:polygon(var(--cut) 0,100% 0,100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,0 100%,0 var(--cut));
+  backdrop-filter:blur(14px) saturate(120%);
+  -webkit-backdrop-filter:blur(14px) saturate(120%);
+  box-shadow:0 30px 80px -30px rgba(0,0,0,.9),inset 0 1px 0 rgba(255,255,255,.05);
+}
+.sheet.narrow{width:min(520px,100%)}
+.sheet.wide{width:min(1080px,100%)}
+.sheet-head{
+  display:flex;align-items:center;gap:14px;
+  padding:clamp(14px,2.4vmin,22px) var(--pad);
+  border-bottom:1px solid var(--line);
+  flex:0 0 auto;
+}
+.sheet-body{
+  padding:var(--pad);
+  overflow-y:auto;overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;touch-action:pan-y;
+  flex:1 1 auto;min-height:0;
+}
+.sheet-foot{
+  display:flex;gap:10px;flex-wrap:wrap;
+  padding:clamp(12px,2vmin,18px) var(--pad);
+  border-top:1px solid var(--line);
+  flex:0 0 auto;
+}
+.sheet-body::-webkit-scrollbar{width:8px}
+.sheet-body::-webkit-scrollbar-track{background:rgba(255,255,255,.03)}
+.sheet-body::-webkit-scrollbar-thumb{background:rgba(126,196,255,.22)}
+.sheet-body::-webkit-scrollbar-thumb:hover{background:var(--accent)}
+
+/* ---- type ------------------------------------------------------------- */
+h1,h2,h3{margin:0;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+h1{font-size:clamp(26px,5.6vmin,46px);line-height:1}
+h2{font-size:clamp(17px,2.9vmin,25px)}
+h3{font-size:clamp(13px,2vmin,15px);letter-spacing:.16em;color:var(--muted)}
+p{margin:0 0 12px}
+.eyebrow{
+  font-family:var(--font-m);font-size:11px;letter-spacing:.30em;text-transform:uppercase;
+  color:var(--accent);opacity:.9;
+}
+.mono{font-family:var(--font-m);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.dim{color:var(--dim)}
+.tiny{font-size:12px;letter-spacing:.04em}
+.center{text-align:center}
+.grow{flex:1 1 auto}
+.nowrap{white-space:nowrap}
+</style>

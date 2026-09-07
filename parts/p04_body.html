@@ -1,0 +1,406 @@
+<style>
+/* ---- screen-specific layout -------------------------------------------- */
+.screen.left{justify-content:flex-start}
+.screen.left .sheet{width:min(430px,100%)}
+@media (max-width:900px){.screen.left{justify-content:center}}
+.menu-foot{display:flex;justify-content:space-between;gap:10px;width:100%;align-items:center;flex-wrap:wrap}
+.mode-head{display:flex;flex-direction:column;gap:2px}
+#mode-desc{
+  font-size:13px;color:var(--muted);min-height:2.6em;
+  padding:11px 13px;background:rgba(0,0,0,.24);border-left:2px solid var(--accent);margin:14px 0 4px;
+}
+#over-badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.tagpill{
+  font-family:var(--font-m);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  padding:4px 9px;border:1px solid var(--line-2);color:var(--muted);
+}
+.tagpill.hot{border-color:var(--accent);color:var(--accent)}
+.over-nums{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap}
+.hidden{display:none!important}
+/* floating score popups: born at the head, drift up, fade out */
+@keyframes popFloat{
+  0%{opacity:0;transform:translate(-50%,-50%) scale(.62)}
+  16%{opacity:1;transform:translate(-50%,-92%) scale(1.08)}
+  34%{transform:translate(-50%,-118%) scale(1)}
+  100%{opacity:0;transform:translate(-50%,-280%) scale(.94)}
+}
+.pop.go{animation:popFloat 1.05s cubic-bezier(.2,.8,.3,1) forwards}
+.reduce-motion .pop.go{animation-duration:.7s}
+/* the combo meter is a span, so it needs blockifying before height applies */
+#combo .bar{display:block}
+/* the touch layer must never swallow a tap meant for a menu or the HUD */
+#touch,#dpad{pointer-events:none}
+#dpad button{pointer-events:auto}
+#dpad button.hit{background:var(--accent-soft);border-color:var(--accent)}
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="stage"></canvas>
+
+  <!-- ambient screen treatment -->
+  <div id="fx"><div class="vig"></div><div class="scan"></div><div class="edge"></div><div class="flash"></div></div>
+
+  <!-- ======================= HUD ======================= -->
+  <div id="hud" aria-hidden="true">
+    <div id="hud-tl">
+      <div class="hud-box">
+        <span class="hud-l">Score</span>
+        <span class="hud-v" id="hud-score">0</span>
+        <span class="hud-v" id="hud-best">BEST 0</span>
+      </div>
+    </div>
+    <div id="hud-tc">
+      <div class="hud-box" style="display:flex;gap:16px;align-items:center">
+        <span><span class="hud-l">Level</span><span class="hud-v" id="hud-level">1</span></span>
+        <span id="hud-info-wrap"><span class="hud-l" id="hud-info-l">Length</span><span class="hud-v" id="hud-info">4</span></span>
+      </div>
+      <div id="combo"><span id="combo-txt">COMBO ×2</span><span class="bar"><i id="combo-bar"></i></span></div>
+      <div class="telemetry" id="tel-hud"><canvas></canvas></div>
+    </div>
+    <div id="hud-tr">
+      <div class="hud-box" id="hud-stats-box">
+        <div id="hud-stats">
+          <span><span class="hud-l">Speed</span><span class="hud-v" id="hud-speed" style="font-size:13px">6.0</span></span>
+          <span><span class="hud-l">Food</span><span class="hud-v" id="hud-food" style="font-size:13px">0</span></span>
+        </div>
+        <span class="hud-l" id="hud-fps">60 FPS</span>
+      </div>
+      <button class="btn icon" id="btn-pause" aria-label="Pause game" title="Pause (Space)">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+      </button>
+    </div>
+    <div id="hud-bl"><div id="powerbar"></div></div>
+  </div>
+
+  <!-- floating popups / banners -->
+  <div id="popups"></div>
+  <div id="banner"><div class="big" id="banner-big"></div><div class="small" id="banner-small"></div></div>
+
+  <!-- ======================= touch controls ======================= -->
+  <div id="touch">
+    <div id="dpad">
+      <div class="hub"></div>
+      <button class="up" data-dir="up" aria-label="Move up"><svg viewBox="0 0 24 24"><path d="M12 5l7 12H5z"/></svg></button>
+      <button class="dn" data-dir="down" aria-label="Move down"><svg viewBox="0 0 24 24"><path d="M12 19L5 7h14z"/></svg></button>
+      <button class="lf" data-dir="left" aria-label="Move left"><svg viewBox="0 0 24 24"><path d="M5 12l12-7v14z"/></svg></button>
+      <button class="rt" data-dir="right" aria-label="Move right"><svg viewBox="0 0 24 24"><path d="M19 12L7 19V5z"/></svg></button>
+    </div>
+    <div id="swipe-hint">Swipe to steer</div>
+  </div>
+
+  <!-- ======================= LOADING ======================= -->
+  <div class="screen active" id="screen-load">
+    <div class="sheet">
+      <div class="load-orbit"><i></i><i></i><i></i><b id="load-pct">0%</b></div>
+      <div class="brand" style="align-items:center">
+        <div class="wordmark"><span class="a">NEURAL</span><span class="b">SNAKE</span></div>
+        <div class="sub" style="text-align:center;width:100%">Three-dimensional grid organism</div>
+      </div>
+      <div class="bar" style="width:min(340px,80vw)"><i id="load-bar"></i></div>
+      <div class="load-msg" id="load-msg">Initializing neural snake…</div>
+      <button class="btn primary big" id="btn-enter">Press play <span class="k">ENTER</span></button>
+    </div>
+  </div>
+
+  <!-- ======================= MAIN MENU ======================= -->
+  <div class="screen left" id="screen-menu">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div class="brand">
+          <div class="wordmark"><span class="a">NEURAL</span><span class="b">SNAKE</span></div>
+          <div class="sub">Three-dimensional grid organism</div>
+        </div>
+      </div>
+      <div class="sheet-body">
+        <div class="telemetry" id="tel-menu"><canvas></canvas><span class="tag">LINK LIVE</span></div>
+        <div class="menu-list" style="margin-top:16px">
+          <button class="btn primary big block" id="btn-play">Play <span class="k">ENTER</span></button>
+          <button class="btn block" id="btn-modes">Game modes <span class="k">G</span></button>
+          <button class="btn block" id="btn-maps">Select Map (16 Arenas) <span class="k">M</span></button>
+          <button class="btn block" id="btn-custom">Customize <span class="k">C</span></button>
+          <button class="btn block" id="btn-ach">Achievements <span class="k">A</span></button>
+          <button class="btn block" id="btn-stats">Statistics <span class="k">T</span></button>
+          <button class="btn block" id="btn-settings">Settings <span class="k">S</span></button>
+          <button class="btn block" id="btn-help">How to play <span class="k">H</span></button>
+        </div>
+        <h3 style="margin-top:20px">Today's challenges</h3>
+        <div id="challenges" class="menu-list"></div>
+      </div>
+      <div class="sheet-foot">
+        <div class="menu-foot">
+          <span class="tiny dim mono" id="menu-mode">CLASSIC · NORMAL</span>
+          <span class="tiny dim mono" id="menu-best">BEST 0</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= MODE SELECT ======================= -->
+  <div class="screen" id="screen-modes">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div class="mode-head grow"><span class="eyebrow">Step 1 — pick a run</span><h2>Game modes</h2></div>
+      </div>
+      <div class="sheet-body">
+        <div class="grid g2" id="mode-grid"></div>
+        <div id="mode-desc"></div>
+        <h3 style="margin-top:18px">Difficulty</h3>
+        <div class="seg" id="diff-seg" role="radiogroup" aria-label="Difficulty"></div>
+        <p class="tiny dim" id="diff-desc" style="margin-top:10px"></p>
+
+        <div style="margin-top:16px;background:rgba(255,255,255,0.04);border:1px solid var(--line);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px);">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span id="mode-map-swatch" style="width:26px;height:26px;border-radius:4px;display:inline-block;border:1px solid var(--line-2);"></span>
+            <div>
+              <div style="font-size:10px;letter-spacing:.12em;color:var(--dim);text-transform:uppercase;">Selected Arena</div>
+              <strong id="mode-map-name" style="font-size:14px;color:var(--accent);">Neural Grid</strong>
+              <div id="mode-map-desc" class="tiny dim" style="font-size:11px;">Cold indigo substrate, aqua conduits.</div>
+            </div>
+          </div>
+          <button class="btn tiny ghost" id="btn-mode-maps" type="button" style="min-height:36px;padding:6px 14px;">16 Maps →</button>
+        </div>
+      </div>
+      <div class="sheet-foot">
+        <button class="btn primary" id="btn-mode-start">Start run <span class="k">ENTER</span></button>
+        <button class="btn ghost grow" id="btn-mode-back">Back <span class="k">ESC</span></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= CUSTOMIZE ======================= -->
+  <div class="screen" id="screen-custom">
+    <div class="sheet wide">
+      <div class="sheet-head">
+        <div class="mode-head grow"><span class="eyebrow">Appearance & Worlds</span><h2>Customize & Arenas</h2></div>
+        <span class="tiny mono dim" id="cust-unlock">UNLOCKS AT BEST SCORE</span>
+      </div>
+      <div class="sheet-body">
+        <div class="tabs" role="tablist">
+          <button role="tab" id="tab-color" aria-selected="true" data-tab="color">Colour</button>
+          <button role="tab" id="tab-style" aria-selected="false" data-tab="style">Skin</button>
+          <button role="tab" id="tab-arena" aria-selected="false" data-tab="arena">Arenas (16 Maps)</button>
+        </div>
+        <div id="pane-color" class="grid g4"></div>
+        <div id="pane-style" class="grid g3 hidden"></div>
+        <div id="pane-arena" class="grid g3 hidden"></div>
+        <p class="tiny dim" id="cust-hint" style="margin-top:14px"></p>
+      </div>
+      <div class="sheet-foot">
+        <button class="btn primary" id="btn-cust-back">Done <span class="k">ESC</span></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= ACHIEVEMENTS ======================= -->
+  <div class="screen" id="screen-ach">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div class="mode-head grow"><span class="eyebrow" id="ach-count">0 / 0 unlocked</span><h2>Achievements</h2></div>
+      </div>
+      <div class="sheet-body"><div class="menu-list" id="ach-list"></div></div>
+      <div class="sheet-foot"><button class="btn primary" id="btn-ach-back">Back <span class="k">ESC</span></button></div>
+    </div>
+  </div>
+
+  <!-- ======================= STATISTICS ======================= -->
+  <div class="screen" id="screen-stats">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div class="mode-head grow"><span class="eyebrow">Lifetime record</span><h2>Statistics</h2></div>
+      </div>
+      <div class="sheet-body">
+        <div class="grid g2" id="stats-grid"></div>
+        <h3 style="margin-top:20px">Best score per mode</h3>
+        <div class="grid g2" id="stats-modes" style="margin-top:8px"></div>
+      </div>
+      <div class="sheet-foot">
+        <button class="btn primary" id="btn-stats-back">Back <span class="k">ESC</span></button>
+        <button class="btn ghost danger grow" id="btn-wipe">Erase all data</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= SETTINGS ======================= -->
+  <div class="screen" id="screen-settings">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div class="mode-head grow"><span class="eyebrow">Audio · graphics · controls</span><h2>Settings</h2></div>
+      </div>
+      <div class="sheet-body" id="settings-body"></div>
+      <div class="sheet-foot">
+        <button class="btn primary" id="btn-set-back">Back <span class="k">ESC</span></button>
+        <button class="btn ghost grow" id="btn-set-default">Restore defaults</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= HOW TO PLAY ======================= -->
+  <div class="screen" id="screen-help">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div class="mode-head grow"><span class="eyebrow">Two minutes to competent</span><h2>How to play</h2></div>
+      </div>
+      <div class="sheet-body help">
+        <h3>🎮 Steer & Movement</h3>
+        <p><b>PC/Laptop:</b> Use the <span class="kbd">↑</span><span class="kbd">↓</span><span class="kbd">←</span><span class="kbd">→</span> arrows or <span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span> keys on your keyboard.<br>
+        <b>Mobile:</b> <b>Swipe</b> anywhere on the screen to turn. You can also turn on the on-screen <b>Thumb Pad (D-Pad)</b> in the Settings.<br>
+        <i>Note:</i> Your turn is instant. You cannot turn directly backward into your own body.</p>
+
+        <h3>🍎 Eat & Combos</h3>
+        <p><b>Normal Food (Cyan Cores):</b> Eating these grows your snake and adds to your score.<br>
+        <b>Special Food (Violet/Pink Cores):</b> These give 3x more points but disappear quickly. Grab them fast!<br>
+        <b>Combo System:</b> Eating food quickly in succession builds your combo multiplier (×2, ×3, ×4...). This multiplies your points heavily! If you wait too long, the combo breaks.</p>
+
+        <h3>⚡ Active Abilities</h3>
+        <p>Before a run, equip a special ability in the <b>Cyber Codex (<span class="kbd">X</span>)</b>. During the game, press <span class="kbd">Q</span>, <span class="kbd">E</span>, or <span class="kbd">F</span> on your keyboard (or tap the bottom-left button on mobile) to use it. After use, it goes on a short cooldown before it can be used again.</p>
+        <div class="defs" id="help-abilities"></div>
+
+        <h3>🧬 Mutations & Augments</h3>
+        <p>For every <b>5 cores</b> you eat, the Live Augment Dock appears on the left with 3 upgrade cards. Press <span class="kbd">1</span>, <span class="kbd">2</span>, or <span class="kbd">3</span> (or tap on mobile) to pick one. The game continues without pausing. These powers are permanent passives that stack up until you die.</p>
+        <div class="defs" id="help-mutations"></div>
+
+        <h3>🔥 Pro Synergies & Best Builds</h3>
+        <div class="defs" style="grid-template-columns:1fr 1fr">
+          <div class="def" style="border-left:3px solid #ff2e88">
+            <b style="color:#ff2e88">⚡ Hyper-Score Surge</b>
+            <span><b>Overcharge + Velocity Ramp + Neural Link</b><br>Doubles all score gains, increases movement speed, and extends the combo time limit. The absolute best build for topping the leaderboards!</span>
+          </div>
+          <div class="def" style="border-left:3px solid #54e08a">
+            <b style="color:#54e08a">🛡 Immortal Fortress</b>
+            <span><b>Hardened Scales + Ricochet + Chrono Loop + Phase Shift</b><br>Makes you practically unkillable. Forgives fatal crashes, bounces you off walls, and lets you phase through solid objects like a ghost.</span>
+          </div>
+          <div class="def" style="border-left:3px solid #9166ff">
+            <b style="color:#9166ff">🌀 Core Harvester</b>
+            <span><b>Magnetic Pulse + Chain Lightning + Core Siphon + EMP Blast</b><br>Magnetically pulls all nearby food directly to you and drags distant food closer. Makes collecting food effortless!</span>
+          </div>
+          <div class="def" style="border-left:3px solid #ffd257">
+            <b style="color:#ffd257">⚔ Apex Survivor</b>
+            <span><b>Apex Predator + Singularity + Void Walker</b><br>Locks your combo multiplier so it never drops to zero. Power-ups last much longer. The best setup for hard and endless modes.</span>
+          </div>
+        </div>
+
+        <h3>💎 Field Power-ups</h3>
+        <p>While playing, you will occasionally find glowing items on the grid. Collect them for temporary special effects:</p>
+        <div class="defs" id="help-powerups"></div>
+
+        <h3>💀 Hazards</h3>
+        <p><b>Blocks:</b> Solid grey cubes. Hitting them will end your run.<br>
+        <b>Drones:</b> Enemies that patrol back and forth. Avoid them.<br>
+        <b>Laser Gates:</b> These will blink right before they fire. Move away when you see the blink.<br>
+        <b>Spinners & Spikes:</b> Rotating arms and spikes that pop out of the ground.<br>
+        <b>Pro Tip:</b> Any hazard glowing <b>Red</b> is currently deadly. Stay away from red objects!</p>
+
+        <h3>🕹️ Game Modes</h3>
+        <p>The game features multiple modes, each with its own unique challenge and playstyle:</p>
+        <div class="defs" id="help-modes"></div>
+
+        <h3>⌨️ Key Shortcuts</h3>
+        <p><span class="kbd">Q</span> / <span class="kbd">E</span> / <span class="kbd">F</span>: Use active ability<br>
+        <span class="kbd">1</span> / <span class="kbd">2</span> / <span class="kbd">3</span>: Pick a mutation card<br>
+        <span class="kbd">X</span>: Open Cyber Codex (Upgrades Menu)<br>
+        <span class="kbd">Space</span> or <span class="kbd">Esc</span>: Pause game or Go back<br>
+        <span class="kbd">R</span>: Instant Restart<br>
+        <span class="kbd">M</span>: Toggle Sound/Music</p>
+      </div>
+      <div class="sheet-foot"><button class="btn primary" id="btn-help-back">Back <span class="k">ESC</span></button></div>
+    </div>
+  </div>
+
+  <!-- ======================= PAUSE ======================= -->
+  <div class="screen" id="screen-pause">
+    <div class="sheet narrow">
+      <div class="sheet-head">
+        <div class="mode-head grow"><span class="eyebrow" id="pause-sub">Run held</span><h2>Paused</h2></div>
+      </div>
+      <div class="sheet-body">
+        <div class="menu-list">
+          <button class="btn primary big block" id="btn-resume">Resume <span class="k">SPACE</span></button>
+          <button class="btn block" id="btn-restart">Restart run <span class="k">R</span></button>
+          <button class="btn block" id="btn-pause-settings">Settings</button>
+          <button class="btn block danger" id="btn-quit">Leave to menu</button>
+        </div>
+      </div>
+      <div class="sheet-foot"><span class="tiny dim mono" id="pause-stats"></span></div>
+    </div>
+  </div>
+
+  <!-- ======================= GAME OVER ======================= -->
+  <div class="screen" id="screen-over">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div class="mode-head grow"><span class="eyebrow" id="over-cause">Collision</span><h2 id="over-title">Run ended</h2></div>
+        <span id="over-new">New best</span>
+      </div>
+      <div class="sheet-body">
+        <div class="over-nums">
+          <div><span class="hud-l">Final score</span><div id="over-score">0</div></div>
+          <div><span class="hud-l">Best</span><div class="hud-v mono" id="over-best" style="font-size:22px;color:var(--muted)">0</div></div>
+        </div>
+        <div id="over-badges"></div>
+        <div class="grid g2" id="over-stats" style="margin-top:16px"></div>
+      </div>
+      <div class="sheet-foot">
+        <button class="btn primary big" id="btn-retry">Run again <span class="k">ENTER</span></button>
+        <button class="btn ghost grow" id="btn-over-modes">Change mode</button>
+        <button class="btn ghost" id="btn-over-menu">Menu <span class="k">ESC</span></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- toasts + achievement popup -->
+  <div id="toasts"></div>
+  <div id="ach-pop">
+    <div class="badge" id="ach-pop-icon">◆</div>
+    <div>
+      <span class="eyebrow">Achievement unlocked</span>
+      <b id="ach-pop-name">First bite</b>
+      <span id="ach-pop-desc">Eat your first core.</span>
+    </div>
+  </div>
+
+  <!-- WebGL fallback -->
+  <div id="nogl">
+    <div class="sheet">
+      <div class="sheet-body">
+        <h2 style="color:var(--amber)">3D unavailable</h2>
+        <p class="muted" style="margin-top:10px">This browser could not start WebGL, so the arena cannot be drawn.</p>
+        <p class="muted">Try a current version of Chrome, Edge, Firefox or Safari, switch on hardware acceleration in your browser settings, or open the file on another device.</p>
+        <p class="tiny dim mono" id="nogl-detail"></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===========================================================================
+     Three.js is the single external dependency, loaded as a classic script so
+     this file also works when opened straight off the disk. Three CDNs are
+     tried in order; if all of them fail the game shows a clear panel instead
+     of a black screen.
+     ======================================================================== -->
+<script>
+(function () {
+  var srcs = [
+    'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js',
+    'https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js',
+    'https://unpkg.com/three@0.128.0/build/three.min.js'
+  ];
+  var i = 0;
+  function next() {
+    if (window.THREE) return;
+    if (i >= srcs.length) { window.__threeFailed = true; return; }
+    var s = document.createElement('script');
+    s.src = srcs[i++];
+    s.async = false;
+    s.onload = function () { if (!window.THREE) next(); };
+    s.onerror = next;
+    document.head.appendChild(s);
+  }
+  next();
+})();
+</script>
+
+<script>
+(function () {
+'use strict';
+
