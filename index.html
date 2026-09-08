@@ -843,6 +843,7 @@ input[type=range]:focus-visible{outline:2px solid var(--accent);outline-offset:4
       <button class="btn icon" id="btn-camera" aria-label="Cycle camera view" title="Switch camera view (V)">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9a3 3 0 100 6 3 3 0 000-6zm7-4h-2.17l-1.83-2H9L7.17 5H5c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 14H5V7h2.83L9.66 5h4.68l1.83 2H19v12z"/></svg>
       </button>
+
       <button class="btn icon" id="btn-pause" aria-label="Pause game" title="Pause (Space)">
         <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
       </button>
@@ -1666,6 +1667,7 @@ const SETTINGS_SCHEMA = [
     options: [{ v: 'close', t: 'Close' }, { v: 'normal', t: 'Normal' }, { v: 'far', t: 'Far' }, { v: 'firstperson', t: 'Action Chase' }] },
   { key: 'fps',        type: 'switch', label: 'Show frame rate', hint: 'Small counter in the top right.' },
   { key: 'reduceMotion', type: 'switch', label: 'Reduce interface motion', hint: 'Calms menu and popup animation.' },
+  { key: 'fullscreen', type: 'switch', label: 'Fullscreen', hint: 'Play in fullscreen mode.' },
   { group: 'Controls' },
   { key: 'haptics',    type: 'switch', label: 'Vibration & Haptics', hint: 'Tactile vibration on mobile and supported controllers.' },
   { key: 'gamepad',    type: 'switch', label: 'Gamepad / Controller', hint: 'Xbox, PlayStation and USB controllers.' },
@@ -1678,7 +1680,8 @@ const DEFAULT_SETTINGS = {
   sfx: true, music: true, volSfx: 70, volMusic: 45, spatialAudio: true,
   quality: 'high', particles: 'normal', shake: 60, camera: 'normal',
   fps: false, reduceMotion: false, haptics: true, gamepad: true,
-  touchMode: 'both', sensitivity: 50, powersEnabled: true
+  touchMode: 'both', sensitivity: 50, powersEnabled: true,
+  fullscreen: false
 };
 
 const DEFAULT_SAVE = {
@@ -4853,6 +4856,8 @@ const Input = {
     }
     Audio.unlock();
 
+    if (key === 'f') { UI.toggleFullscreen(); return; }
+
     if (st === STATE.LOAD) {
       if (key === 'enter' || key === ' ' || key === 'spacebar') Boot.enter();
       return;
@@ -4873,7 +4878,7 @@ const Input = {
           return;
         }
       }
-      if (key === 'q' || key === 'e' || key === 'f') Game.activateAbility();
+      if (key === 'q' || key === 'e') Game.activateAbility();
       else if (key === 'v') Game.cycleCamera();
       else if (key === ' ' || key === 'spacebar' || key === 'escape' || key === 'p') Game.pause();
       else if (key === 'r') Game.restart();
@@ -5140,6 +5145,15 @@ const UI = {
       if (e.target && e.target.closest && e.target.closest('#dpad,#stage')) e.preventDefault();
     }, false);
 
+    on(document, 'fullscreenchange', function () {
+      const isFs = !!document.fullscreenElement;
+      if (SaveManager.data.settings.fullscreen !== isFs) {
+        SaveManager.data.settings.fullscreen = isFs;
+        SaveManager.save();
+        if (Game.state === STATE.SETTINGS) self.buildSettings();
+      }
+    });
+
     const tap = function (node, fn, snd) {
       on(node, 'click', function (e) {
         e.preventDefault();
@@ -5215,6 +5229,7 @@ const UI = {
         }
       }, false);
     }
+
     tap(E.btnPause, function () { Game.pause(); });
     tap(E.btnResume, function () { Game.resume(); });
     tap(E.btnRestart, function () { Game.restart(); }, 'start');
@@ -5706,6 +5721,8 @@ const UI = {
       Game.applyParticles();
     } else if (key === 'reduceMotion' || key === 'fps') {
       this.applyPrefs();
+    } else if (key === 'fullscreen') {
+      this.toggleFullscreen();
     } else if (key === 'touchMode') {
       this.hudOn(Game.state === STATE.PLAY);
     }
@@ -5729,6 +5746,24 @@ const UI = {
     const s = SaveManager.data.settings;
     toggleClass(document.documentElement, 'reduce-motion', !!s.reduceMotion);
     toggleClass(this.E.hudFps, 'hide', !s.fps);
+  },
+
+  toggleFullscreen: function () {
+    const doc = window.document;
+    const docEl = doc.documentElement;
+    const requestFullScreen = docEl.requestFullscreen || docEl.mozRequestFullScreen || docEl.webkitRequestFullScreen || docEl.msRequestFullscreen;
+    const cancelFullScreen = doc.exitFullscreen || doc.mozCancelFullScreen || doc.webkitExitFullscreen || doc.msExitFullscreen;
+
+    if (!doc.fullscreenElement && !doc.mozFullScreenElement && !doc.webkitFullscreenElement && !doc.msFullscreenElement) {
+      if (requestFullScreen) { requestFullScreen.call(docEl); }
+      Audio.play('click');
+      this.toast('Fullscreen Enabled', 'good');
+    } else {
+      if (cancelFullScreen) { cancelFullScreen.call(doc); }
+      Audio.play('back');
+    }
+    // Ensure canvas resizes immediately after transition
+    setTimeout(() => { if (Game.renderer) Game.resize(); }, 150);
   },
 
   toggleMute: function () {
@@ -7136,6 +7171,20 @@ const Game = {
     else if (this.powers.has('speed')) zoom *= 1.05;
     else if (this.powers.has('slow')) zoom *= 0.96;
     this.zoom += (zoom - this.zoom) * (1 - Math.pow(0.05, dt));
+
+    /* NEW FIX: Dynamically adjust fog density so 'far' camera doesn't get dark/muddy */
+    if (this.arena && this.scene.fog && this.arena.theme) {
+      let baseFog = this.arena.theme.fogD;
+      // If on mobile (aspect < 1), we already scale fog down. Apply that here too if needed.
+      const aspect = window.innerWidth / Math.max(1, window.innerHeight);
+      if (aspect < 1) baseFog *= Math.max(0.45, aspect);
+      
+      // Reduce fog by 40% for the 'far' camera to keep lights bright
+      const targetFog = s.camera === 'far' ? baseFog * 0.6 : baseFog;
+      
+      // Smoothly transition the fog density
+      this.scene.fog.density += (targetFog - this.scene.fog.density) * Math.min(1, dt * 4);
+    }
 
     /* fit the arena in both axes, then apply the preset and the zoom */
     const half = Math.tan(this.camera.fov * Math.PI / 360);
